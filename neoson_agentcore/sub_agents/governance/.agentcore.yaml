@@ -1,0 +1,28 @@
+agent:
+  name: neoson-governance
+  description: >
+    Straumann Group Governance & Compliance specialist sub-agent.
+    Handles corporate policies, SOX/ISO compliance, audit procedures,
+    LGPD/GDPR, internal controls. Receives A2A requests from neoson-supervisor.
+  version: "4.0.0"
+
+runtime:
+  entrypoint: main.py
+  network_mode: PRIVATE
+  region: us-east-1
+  image:
+    ecr_repository: neoson/governance
+    tag: latest
+
+identity:
+  workload_identity_name: neoson-workload-identity
+
+session:
+  memory_id: neoson-memory-store
+  session_ttl_seconds: 28800
+
+environment:
+  KB_ID_TI_GOVERNANCE: ""
+  BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  AWS_REGION: "us-east-1"
+  LOG_LEVEL: "INFO"

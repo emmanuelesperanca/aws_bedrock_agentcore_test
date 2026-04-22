@@ -1,0 +1,54 @@
+# neoson_agentcore/supervisor/.agentcore.yaml
+# AgentCore CLI configuration for the Neoson Supervisor agent.
+#
+# Usage:
+#   cd neoson_agentcore/supervisor
+#   agentcore deploy --env prod
+#   agentcore invoke '{"mensagem": "Qual meu saldo de férias?"}' --stream
+
+agent:
+  name: neoson-supervisor
+  description: >
+    Agente orquestrador Neoson — Straumann Group.
+    Classifica e delega perguntas de RH, TI, Governança e Produção
+    seguindo o padrão Galileo. Acesso controlado por departamento via JWT Entra ID.
+  version: "4.0.0"
+
+runtime:
+  # Entry module — must contain 'app = BedrockAgentCoreApp()' and '@app.entrypoint'
+  entrypoint: main.py
+  # PRIVATE = inside customer VPC; PUBLIC = internet-facing (dev only)
+  network_mode: PRIVATE
+  region: us-east-1
+  image:
+    ecr_repository: neoson/supervisor
+    tag: latest
+
+identity:
+  workload_identity_name: neoson-workload-identity
+  # JWT from Entra ID is read from the Authorization header in the entrypoint.
+  # No Cognito integration — token validation is done by API Gateway JWT Authorizer.
+
+session:
+  # Bedrock Memory Store ARN — created separately via Bedrock console or CLI
+  # aws bedrock-agentcore create-memory --name neoson-memory-store
+  memory_id: neoson-memory-store
+  session_ttl_seconds: 28800   # 8 hours — aligned with Entra ID token lifetime
+
+environment:
+  # Sub-agent ARNs — filled after each sub-agent is deployed (Fase 4)
+  SUB_AGENT_ARN_GOVERNANCE: ""
+  SUB_AGENT_ARN_INFRA: ""
+  SUB_AGENT_ARN_DEV: ""
+  SUB_AGENT_ARN_ENDUSER: ""
+  SUB_AGENT_ARN_RH: ""
+  # Knowledge Base IDs — filled after KBs are created in Bedrock (Fase 3)
+  KB_ID_RH: ""
+  KB_ID_TI_GOVERNANCE: ""
+  KB_ID_TI_INFRA: ""
+  KB_ID_TI_DEV: ""
+  KB_ID_TI_ENDUSER: ""
+  # Model
+  BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  AWS_REGION: "us-east-1"
+  LOG_LEVEL: "INFO"

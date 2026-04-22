@@ -1,0 +1,23 @@
+agent:
+  name: neoson-dev
+  description: >
+    Straumann Group Development & Architecture specialist sub-agent.
+    Covers software standards, CI/CD, ADRs, APIs, DevOps, security in SDLC.
+  version: "4.0.0"
+runtime:
+  entrypoint: main.py
+  network_mode: PRIVATE
+  region: us-east-1
+  image:
+    ecr_repository: neoson/dev
+    tag: latest
+identity:
+  workload_identity_name: neoson-workload-identity
+session:
+  memory_id: neoson-memory-store
+  session_ttl_seconds: 28800
+environment:
+  KB_ID_TI_DEV: ""
+  BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  AWS_REGION: "us-east-1"
+  LOG_LEVEL: "INFO"

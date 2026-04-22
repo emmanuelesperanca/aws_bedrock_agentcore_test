@@ -1,0 +1,23 @@
+agent:
+  name: neoson-infra
+  description: >
+    Straumann Group Infrastructure & Operations specialist sub-agent.
+    Covers network, servers, cloud, monitoring, DR, on-call.
+  version: "4.0.0"
+runtime:
+  entrypoint: main.py
+  network_mode: PRIVATE
+  region: us-east-1
+  image:
+    ecr_repository: neoson/infra
+    tag: latest
+identity:
+  workload_identity_name: neoson-workload-identity
+session:
+  memory_id: neoson-memory-store
+  session_ttl_seconds: 28800
+environment:
+  KB_ID_TI_INFRA: ""
+  BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  AWS_REGION: "us-east-1"
+  LOG_LEVEL: "INFO"

@@ -1,0 +1,325 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Neoson AgentCore — IAM Execution Role and API Gateway HTTP API
+  with Microsoft Entra ID JWT Authorizer (no Cognito).
+  Stack: 00-iam-and-gateway
+
+Parameters:
+  EntraIdTenantId:
+    Type: String
+    Description: Microsoft Entra ID (Azure AD) Tenant ID (GUID)
+
+  EntraIdClientId:
+    Type: String
+    Description: >
+      App Registration Client ID — must match the audience claim in tokens.
+      Configure as api://<ClientId> in the App Registration manifest.
+
+  AgentCoreRuntimeVpcLinkId:
+    Type: String
+    Description: >
+      VPC Link ID pointing to the NLB/ALB in front of the ECS AgentCore service.
+      Create via: aws apigatewayv2 create-vpc-link ...
+
+  AgentCoreServiceUrl:
+    Type: String
+    Description: Internal URL of the AgentCore supervisor container (http://internal-nlb:8080)
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+
+# ===========================================================================
+# Resources
+# ===========================================================================
+Resources:
+
+  # -------------------------------------------------------------------------
+  # IAM — Execution Role used by all Neoson AgentCore containers + Lambdas
+  # -------------------------------------------------------------------------
+  NeosonExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "NeosonAgentCoreExecutionRole-${Environment}"
+      Description: >
+        Execution role for Neoson AgentCore containers (ECS tasks) and Lambda functions.
+        Grants least-privilege access to Bedrock, ECR, Athena, S3, Glue, and CloudWatch.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ECS task principal
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+          # Lambda principal
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+          # Bedrock AgentCore service principal
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BedrockAgentCore
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:*
+                Resource: "*"
+              - Sid: BedrockModels
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-v1:0"
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-3-5-v1:0"
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+              - Sid: BedrockKnowledgeBase
+                Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                  - bedrock:InvokeAgent
+                Resource: "*"
+
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ECRPull
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+
+        - PolicyName: LambdaInvoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeActionGroupLambdas
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/NeosonActionGroup": "true"
+
+        - PolicyName: AthenaDataLake
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AthenaQueryExecution
+                Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - athena:StopQueryExecution
+                  - athena:ListQueryExecutions
+                Resource:
+                  - !Sub "arn:aws:athena:us-east-1:${AWS::AccountId}:workgroup/neoson-workgroup"
+              - Sid: GlueCatalogRead
+                Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                Resource: "*"
+              - Sid: S3DataLakeAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  # Athena results bucket — replace with your actual bucket name
+                  - !Sub "arn:aws:s3:::neoson-athena-results-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::neoson-athena-results-${AWS::AccountId}/*"
+                  # Data lake source bucket — replace with your actual bucket name
+                  - "arn:aws:s3:::straumann-datalake-prod"
+                  - "arn:aws:s3:::straumann-datalake-prod/*"
+
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: LogAccess
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/neoson/*"
+
+        - PolicyName: SecretsManagerRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadNeosonSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:us-east-1:${AWS::AccountId}:secret:neoson/*"
+
+  # -------------------------------------------------------------------------
+  # API Gateway HTTP API — entry point for the Neoson frontend / FastAPI bridge
+  # -------------------------------------------------------------------------
+  NeosonHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "neoson-gateway-${Environment}"
+      Description: >
+        Neoson AgentCore HTTP API Gateway.
+        Terminates TLS and validates Entra ID JWT tokens before forwarding
+        requests to the AgentCore supervisor runtime.
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - X-Request-ID
+        AllowOrigins:
+          - "*"   # Tighten for prod: restrict to your frontend domain
+        MaxAge: 300
+
+  # JWT Authorizer — validates Entra ID Bearer tokens
+  EntraIdJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref NeosonHttpApi
+      AuthorizerType: JWT
+      Name: entra-id-jwt-authorizer
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        # Audience must match the App Registration Client ID
+        Audience:
+          - !Sub "api://${EntraIdClientId}"
+        # Issuer is the Entra ID v2 endpoint for your tenant
+        Issuer: !Sub "https://login.microsoftonline.com/${EntraIdTenantId}/v2.0"
+
+  # VPC Integration — routes to AgentCore ECS service via VPC Link
+  AgentCoreVpcIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref NeosonHttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub "${AgentCoreServiceUrl}/invocations"
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref AgentCoreRuntimeVpcLinkId
+      PayloadFormatVersion: "1.0"
+      # Forward the Authorization header so identity.py can decode it
+      RequestParameters:
+        overwrite:header.Authorization: "$request.header.Authorization"
+        overwrite:header.X-Request-ID: "$context.requestId"
+
+  # POST /invoke route — protected by Entra ID JWT
+  NeosonInvokeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref NeosonHttpApi
+      RouteKey: "POST /invoke"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref EntraIdJwtAuthorizer
+      Target: !Sub "integrations/${AgentCoreVpcIntegration}"
+
+  # POST /invoke/stream — streaming variant
+  NeosonInvokeStreamRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref NeosonHttpApi
+      RouteKey: "POST /invoke/stream"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref EntraIdJwtAuthorizer
+      Target: !Sub "integrations/${AgentCoreVpcIntegration}"
+
+  # Default stage with access logging
+  NeosonApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref NeosonHttpApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      AccessLogSettings:
+        DestinationArn: !GetAtt NeosonApiAccessLogGroup.Arn
+        Format: >
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp",
+           "requestTime":"$context.requestTime","httpMethod":"$context.httpMethod",
+           "routeKey":"$context.routeKey","status":"$context.status",
+           "responseLength":"$context.responseLength",
+           "authorizerError":"$context.authorizer.error",
+           "integrationError":"$context.integration.error"}
+
+  NeosonApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/neoson/api-gateway/${Environment}"
+      RetentionInDays: 30
+
+  # Athena Workgroup with cost controls
+  NeosonAthenaWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: neoson-workgroup
+      Description: Neoson AgentCore Text-to-SQL workgroup
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://neoson-athena-results-${AWS::AccountId}/query-results/"
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+        BytesScannedCutoffPerQuery: 10737418240  # 10 GB hard cap per query
+
+
+# ===========================================================================
+# Outputs
+# ===========================================================================
+Outputs:
+  NeosonExecutionRoleArn:
+    Description: ARN of the Neoson AgentCore execution role
+    Value: !GetAtt NeosonExecutionRole.Arn
+    Export:
+      Name: !Sub "NeosonExecutionRoleArn-${Environment}"
+
+  NeosonApiGatewayUrl:
+    Description: Invoke URL for the Neoson HTTP API
+    Value: !Sub "https://${NeosonHttpApi}.execute-api.us-east-1.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "NeosonApiGatewayUrl-${Environment}"
+
+  NeosonApiId:
+    Description: API Gateway ID
+    Value: !Ref NeosonHttpApi
+    Export:
+      Name: !Sub "NeosonApiId-${Environment}"
+
+  NeosonAthenaWorkgroupName:
+    Description: Athena workgroup for Neoson Text-to-SQL queries
+    Value: !Ref NeosonAthenaWorkgroup
+    Export:
+      Name: !Sub "NeosonAthenaWorkgroup-${Environment}"

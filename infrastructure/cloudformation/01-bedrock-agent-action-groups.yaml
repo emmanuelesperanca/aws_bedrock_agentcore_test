@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Neoson — Bedrock Agent Action Groups (Stack 01).
+  Creates Lambda functions, S3 OpenAPI schema uploads, and Bedrock Agent
+  with three Action Groups: TI, RH, and DataLake.
+  Must be deployed AFTER stack 00-iam-and-gateway (depends on NeosonExecutionRole).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Default: dev
+  Stack00ExportsPrefix:
+    Type: String
+    Default: neoson-foundation
+    Description: Prefix used in Stack 00 Outputs for cross-stack import
+  SchemaBucketName:
+    Type: String
+    Description: S3 bucket where OpenAPI schemas are uploaded by the deploy script
+  LambdaLayerArnCommons:
+    Type: String
+    Description: ARN of the Lambda Layer containing neoson_lambda_commons
+  TiEcrImageUri:
+    Type: String
+    Description: ECR image URI for the TI dispatcher Lambda (container image)
+    Default: ""
+  RhEcrImageUri:
+    Type: String
+    Description: ECR image URI for the RH dispatcher Lambda (container image)
+    Default: ""
+  DataLakeEcrImageUri:
+    Type: String
+    Description: ECR image URI for the DataLake query Lambda (container image)
+    Default: ""
+  # --- TI Lambda env vars ---
+  AdResetApiUrl:
+    Type: String
+    Default: ""
+  MonitoringApiUrl:
+    Type: String
+    Default: ""
+  ItsmApiUrl:
+    Type: String
+    Default: ""
+  DiskApiUrl:
+    Type: String
+    Default: ""
+  VpnApiUrl:
+    Type: String
+    Default: ""
+  BackupApiUrl:
+    Type: String
+    Default: ""
+  # --- RH Lambda env vars ---
+  RhApiUrl:
+    Type: String
+    Default: ""
+  # --- DataLake Lambda env vars ---
+  AthenaOutputLocation:
+    Type: String
+    Default: ""
+  GlueDatabase:
+    Type: String
+    Default: neoson_datalake
+
+Conditions:
+  UseTiImage: !Not [!Equals [!Ref TiEcrImageUri, ""]]
+  UseRhImage: !Not [!Equals [!Ref RhEcrImageUri, ""]]
+  UseDataLakeImage: !Not [!Equals [!Ref DataLakeEcrImageUri, ""]]
+
+Resources:
+
+  # ─── TI Lambda ─────────────────────────────────────────────────────────────
+
+  NeosonTiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "neoson-ti-dispatcher-${Environment}"
+      Description: Neoson IT tools — Action Group dispatcher
+      Role: !ImportValue
+        Fn::Sub: "${Stack00ExportsPrefix}-NeosonExecutionRoleArn"
+      Architectures: [arm64]
+      Timeout: 60
+      MemorySize: 512
+      PackageType: !If [UseTiImage, Image, Zip]
+      Code: !If
+        - UseTiImage
+        - ImageUri: !Ref TiEcrImageUri
+        - ZipFile: |
+            # placeholder — replaced by deploy script
+            def lambda_handler(event, context): return {}
+      Layers:
+        - !Ref LambdaLayerArnCommons
+      Environment:
+        Variables:
+          AD_RESET_API_URL: !Ref AdResetApiUrl
+          MONITORING_API_URL: !Ref MonitoringApiUrl
+          ITSM_API_URL: !Ref ItsmApiUrl
+          DISK_API_URL: !Ref DiskApiUrl
+          VPN_API_URL: !Ref VpnApiUrl
+          BACKUP_API_URL: !Ref BackupApiUrl
+          AWS_REGION_OVERRIDE: !Ref AWS::Region
+          LOG_LEVEL: INFO
+      Tags:
+        - Key: NeosonActionGroup
+          Value: "true"
+        - Key: Environment
+          Value: !Ref Environment
+
+  NeosonTiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt NeosonTiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ─── RH Lambda ─────────────────────────────────────────────────────────────
+
+  NeosonRhFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "neoson-rh-dispatcher-${Environment}"
+      Description: Neoson HR tools — Action Group dispatcher
+      Role: !ImportValue
+        Fn::Sub: "${Stack00ExportsPrefix}-NeosonExecutionRoleArn"
+      Architectures: [arm64]
+      Timeout: 60
+      MemorySize: 512
+      PackageType: !If [UseRhImage, Image, Zip]
+      Code: !If
+        - UseRhImage
+        - ImageUri: !Ref RhEcrImageUri
+        - ZipFile: |
+            def lambda_handler(event, context): return {}
+      Layers:
+        - !Ref LambdaLayerArnCommons
+      Environment:
+        Variables:
+          RH_API_URL: !Ref RhApiUrl
+          AWS_REGION_OVERRIDE: !Ref AWS::Region
+          LOG_LEVEL: INFO
+      Tags:
+        - Key: NeosonActionGroup
+          Value: "true"
+        - Key: Environment
+          Value: !Ref Environment
+
+  NeosonRhPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt NeosonRhFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ─── DataLake Lambda ────────────────────────────────────────────────────────
+
+  NeosonDataLakeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "neoson-datalake-query-${Environment}"
+      Description: Neoson Track B — Natural Language to Athena query
+      Role: !ImportValue
+        Fn::Sub: "${Stack00ExportsPrefix}-NeosonExecutionRoleArn"
+      Architectures: [arm64]
+      Timeout: 90
+      MemorySize: 512
+      PackageType: !If [UseDataLakeImage, Image, Zip]
+      Code: !If
+        - UseDataLakeImage
+        - ImageUri: !Ref DataLakeEcrImageUri
+        - ZipFile: |
+            def lambda_handler(event, context): return {}
+      Layers:
+        - !Ref LambdaLayerArnCommons
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID_HAIKU: "us.anthropic.claude-haiku-3-5-20241022-v1:0"
+          ATHENA_WORKGROUP: neoson-workgroup
+          ATHENA_OUTPUT_LOCATION: !Sub
+            - "${Base}query-results/"
+            - Base: !Ref AthenaOutputLocation
+          GLUE_DATABASE: !Ref GlueDatabase
+          AWS_REGION_OVERRIDE: !Ref AWS::Region
+          LOG_LEVEL: INFO
+      Tags:
+        - Key: NeosonActionGroup
+          Value: "true"
+        - Key: Environment
+          Value: !Ref Environment
+
+  NeosonDataLakePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt NeosonDataLakeFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ─── Bedrock Agent ──────────────────────────────────────────────────────────
+  # NOTE: The BedrockAgentCoreApp (supervisor/main.py) is deployed separately
+  # via `agentcore deploy`. The AWS::Bedrock::Agent below is an *alias* that
+  # wires the three Action Groups to their Lambdas.
+  # Uncomment and fill AgentResourceRoleArn after Fase 1 deploy.
+
+  # NeosonBedrockAgent:
+  #   Type: AWS::Bedrock::Agent
+  #   Properties:
+  #     AgentName: !Sub "neoson-supervisor-${Environment}"
+  #     AgentResourceRoleArn: !ImportValue
+  #       Fn::Sub: "${Stack00ExportsPrefix}-NeosonExecutionRoleArn"
+  #     FoundationModel: anthropic.claude-sonnet-4-5-v1:0
+  #     Instruction: |
+  #       (injected from supervisor/system_prompt.py during agentcore deploy)
+  #     ActionGroups:
+  #       - ActionGroupName: neoson-ti-actions
+  #         ActionGroupExecutor:
+  #           Lambda: !GetAtt NeosonTiFunction.Arn
+  #         ApiSchema:
+  #           S3:
+  #             S3BucketName: !Ref SchemaBucketName
+  #             S3ObjectKey: schemas/neoson-ti-actions.openapi.yaml
+  #       - ActionGroupName: neoson-rh-actions
+  #         ActionGroupExecutor:
+  #           Lambda: !GetAtt NeosonRhFunction.Arn
+  #         ApiSchema:
+  #           S3:
+  #             S3BucketName: !Ref SchemaBucketName
+  #             S3ObjectKey: schemas/neoson-rh-actions.openapi.yaml
+  #       - ActionGroupName: neoson-datalake-actions
+  #         ActionGroupExecutor:
+  #           Lambda: !GetAtt NeosonDataLakeFunction.Arn
+  #         ApiSchema:
+  #           S3:
+  #             S3BucketName: !Ref SchemaBucketName
+  #             S3ObjectKey: schemas/neoson-datalake-actions.openapi.yaml
+
+Outputs:
+  TiFunctionArn:
+    Value: !GetAtt NeosonTiFunction.Arn
+    Export:
+      Name: !Sub "${Stack00ExportsPrefix}-TiFunctionArn"
+  RhFunctionArn:
+    Value: !GetAtt NeosonRhFunction.Arn
+    Export:
+      Name: !Sub "${Stack00ExportsPrefix}-RhFunctionArn"
+  DataLakeFunctionArn:
+    Value: !GetAtt NeosonDataLakeFunction.Arn
+    Export:
+      Name: !Sub "${Stack00ExportsPrefix}-DataLakeFunctionArn"

@@ -1,0 +1,182 @@
+openapi: "3.0.0"
+info:
+  title: Neoson RH Action Group API
+  version: "1.0.0"
+  description: >
+    HR self-service tools exposed as a Bedrock Agent Action Group.
+    Employees may query and update their own HR data.
+    Managers (level ≥ 4) may query data for their reports.
+
+paths:
+  /consultar_saldo_ferias:
+    post:
+      operationId: consultar_saldo_ferias
+      summary: Get employee vacation balance
+      description: >
+        Returns the current vacation balance (days available, days expired,
+        and next accrual period) for the employee.
+        Managers may query other employees by passing their matricula.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                matricula:
+                  type: string
+                  description: >
+                    Employee ID or Entra OID. If omitted, returns data for the
+                    authenticated caller. Managers may pass another employee's ID.
+      responses:
+        "200":
+          description: Vacation balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RhResult"
+
+  /consultar_banco_horas:
+    post:
+      operationId: consultar_banco_horas
+      summary: Get employee hours-bank balance
+      description: >
+        Returns the employee's current hours-bank balance (positive = credit, negative = debit).
+        Managers may query for their reports.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                matricula:
+                  type: string
+                  description: Employee ID. If omitted, returns data for the authenticated caller.
+      responses:
+        "200":
+          description: Hours bank balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RhResult"
+
+  /solicitar_ferias:
+    post:
+      operationId: solicitar_ferias
+      summary: Submit a vacation request
+      description: >
+        Creates a vacation request for approval. The request covers the period
+        from data_inicio to data_fim (inclusive). The HR system will validate
+        available balance and send for manager approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - data_inicio
+                - data_fim
+              properties:
+                data_inicio:
+                  type: string
+                  format: date
+                  description: Vacation start date in YYYY-MM-DD format
+                data_fim:
+                  type: string
+                  format: date
+                  description: Vacation end date in YYYY-MM-DD format
+                observacao:
+                  type: string
+                  description: Optional note for the approver
+      responses:
+        "200":
+          description: Vacation request submission result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RhResult"
+
+  /consultar_beneficios:
+    post:
+      operationId: consultar_beneficios
+      summary: Get employee benefits
+      description: >
+        Returns the list of active benefits assigned to the employee
+        (health plan, meal voucher, transport, life insurance, dental, etc.).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                matricula:
+                  type: string
+                  description: Employee ID. If omitted, returns data for the authenticated caller.
+      responses:
+        "200":
+          description: Employee benefits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RhResult"
+
+  /atualizar_dados_pessoais:
+    post:
+      operationId: atualizar_dados_pessoais
+      summary: Update personal data (self-service)
+      description: >
+        Allows employees to update their own personal data fields via self-service.
+        Permitted fields: endereco, telefone, contato_emergencia, email_pessoal.
+        Sensitive fields (CPF, name, bank account) require HR department workflow.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - campo
+                - valor
+              properties:
+                campo:
+                  type: string
+                  enum: [endereco, telefone, contato_emergencia, email_pessoal]
+                  description: Name of the field to update
+                valor:
+                  type: string
+                  description: New value for the field
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RhResult"
+
+components:
+  schemas:
+    RhResult:
+      type: object
+      description: Standard HR tool response
+      properties:
+        sucesso:
+          type: boolean
+        erro:
+          type: boolean
+        mensagem:
+          type: string
+        solicitacao_id:
+          type: string
+        status:
+          type: string
+        beneficios:
+          type: array
+          items:
+            type: object
+        saldo_ferias_dias:
+          type: integer
+        saldo_horas:
+          type: string

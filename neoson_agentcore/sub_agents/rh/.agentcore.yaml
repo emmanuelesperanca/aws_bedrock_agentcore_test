@@ -1,0 +1,24 @@
+agent:
+  name: neoson-rh
+  description: >
+    Straumann Group HR specialist sub-agent.
+    Covers vacation, benefits, payroll, career, training, HR policies,
+    onboarding/offboarding, personal data updates.
+  version: "4.0.0"
+runtime:
+  entrypoint: main.py
+  network_mode: PRIVATE
+  region: us-east-1
+  image:
+    ecr_repository: neoson/rh
+    tag: latest
+identity:
+  workload_identity_name: neoson-workload-identity
+session:
+  memory_id: neoson-memory-store
+  session_ttl_seconds: 28800
+environment:
+  KB_ID_RH: ""
+  BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  AWS_REGION: "us-east-1"
+  LOG_LEVEL: "INFO"

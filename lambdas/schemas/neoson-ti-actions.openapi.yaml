@@ -1,0 +1,224 @@
+openapi: "3.0.0"
+info:
+  title: Neoson TI Action Group API
+  version: "1.0.0"
+  description: >
+    IT tools exposed as a Bedrock Agent Action Group.
+    All operations are invoked by the Bedrock Agent runtime on behalf of
+    authenticated Straumann Group employees (Entra ID JWT).
+
+paths:
+  /resetar_senha_usuario:
+    post:
+      operationId: resetar_senha_usuario
+      summary: Reset a user's Active Directory password
+      description: >
+        Resets the password of the specified AD user account via the corporate
+        self-service password reset API. The caller must be hierarchy level ≥ 3
+        unless resetting their own password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  description: >
+                    sAMAccountName or UPN of the user whose password will be reset.
+                    Example: "joao.silva" or "joao.silva@straumann.com"
+      responses:
+        "200":
+          description: Password reset result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /verificar_status_servidor:
+    post:
+      operationId: verificar_status_servidor
+      summary: Check server or infrastructure component status
+      description: >
+        Queries the corporate monitoring platform (Zabbix/Datadog/CloudWatch)
+        for the availability and health of a server, VM, or network device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - servidor
+              properties:
+                servidor:
+                  type: string
+                  description: >
+                    Hostname, IP address, or FQDN of the target server.
+                    Example: "app-prod-01" or "10.0.1.50"
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /criar_chamado_ti:
+    post:
+      operationId: criar_chamado_ti
+      summary: Open an IT service desk ticket
+      description: >
+        Creates a new incident or service request in the ITSM system
+        (ServiceNow / JIRA Service Desk) on behalf of the caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - titulo
+              properties:
+                titulo:
+                  type: string
+                  description: Short description / summary of the issue (max 160 chars)
+                descricao:
+                  type: string
+                  description: Detailed description of the problem or request
+                prioridade:
+                  type: string
+                  enum: [baixa, media, alta, critica]
+                  default: media
+                  description: Ticket priority level
+                categoria:
+                  type: string
+                  description: >
+                    Issue category. Examples: "hardware", "software", "rede", "acesso", "geral"
+                  default: geral
+      responses:
+        "200":
+          description: Ticket creation result with ticket ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /verificar_espaco_disco:
+    post:
+      operationId: verificar_espaco_disco
+      summary: Check disk space on a server
+      description: >
+        Returns disk utilization metrics for a specific server and optional volume/mount point.
+        Uses CloudWatch Agent metrics or an external monitoring API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - servidor
+              properties:
+                servidor:
+                  type: string
+                  description: Hostname, IP, or EC2 instance ID of the target server
+                volume:
+                  type: string
+                  description: >
+                    Mount point or drive letter to check.
+                    Examples: "/", "/data", "C:", "D:"
+                    If omitted, the root volume is checked.
+      responses:
+        "200":
+          description: Disk space information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /gerenciar_acesso_vpn:
+    post:
+      operationId: gerenciar_acesso_vpn
+      summary: Enable or disable VPN access for a user
+      description: >
+        Manages VPN access via the corporate network access control API.
+        Requires hierarchy level ≥ 3 (IT Coordinator or above).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - acao
+              properties:
+                username:
+                  type: string
+                  description: UPN or sAMAccountName of the target user
+                acao:
+                  type: string
+                  enum: [habilitar, desabilitar]
+                  description: Action to perform on the VPN access
+      responses:
+        "200":
+          description: VPN management result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /backup_status:
+    post:
+      operationId: backup_status
+      summary: Check the last backup job status for a server
+      description: >
+        Returns the status of the most recent backup job for a given resource.
+        Queries AWS Backup or an external backup management system (Veeam, Commvault).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - servidor
+              properties:
+                servidor:
+                  type: string
+                  description: Hostname, AWS resource ARN, or backup job resource ID
+                tipo_recurso:
+                  type: string
+                  enum: [ec2, rds, efs, s3, on-premises]
+                  default: ec2
+                  description: Resource type for context
+      responses:
+        "200":
+          description: Backup status result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+components:
+  schemas:
+    ActionResult:
+      type: object
+      description: >
+        Standard tool response. May contain success/error information,
+        relevant data, and human-readable messages.
+      properties:
+        sucesso:
+          type: boolean
+        erro:
+          type: boolean
+        mensagem:
+          type: string
+        ticket:
+          type: string
+        status:
+          type: string
